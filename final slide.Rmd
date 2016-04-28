@@ -1,0 +1,296 @@
+---
+title: "ANALYSIS OF MONTHLY CRUDE OIL PRICE"
+author: Jung-Han Wang, Qing Cai, Yina Wu
+output: 
+  revealjs::revealjs_presentation:
+    theme: league
+    center: TRUE
+---
+
+```{r,echo=FALSE, include=FALSE}
+## Set up knitting rule
+knitr::opts_chunk$set(echo = TRUE, fig.width=6, fig.height=3,warning=FALSE,message = FALSE)
+library(pander)
+```
+
+## Objective
+
+Analyze and forecast crude oil prices using the data from West Texas Intermediate (WTI)
+
+## {data-background-iframe="download data.html"}
+
+##  Data Preparation
+
+<section> 
+Using _data.table_ package to efficiently load csv into R</h2>
+```{r}
+library(data.table)
+gas<-fread("https://www.dropbox.com/s/38awxzkkz1ksmyp/Raw%20Data.csv?raw=1")
+```
+
+</section>
+
+<section>
+<h4>Check the first row of the data. And identify its class.</h4>
+```{r}
+head(gas)[1,]
+## Check the format
+pandoc.table(apply(gas,2,class))
+```
+</section>
+
+<section>
+
+- Change DATE format from character to Date 
+- Changed gas price from character to numeric
+- Check all formats are correct
+
+```{r}
+### Change Date format to Date
+gas$DATE<-as.Date(gas$DATE)
+### Change Value format to Numeric
+gas$VALUE<-as.numeric(as.character(gas$VALUE))
+## Check all format which looks good, DATE=Date, VALUE=numeric
+str(gas)
+```
+</section>
+
+<section>
+
+- Remove missing value in gas price
+- Calculate monthly average gas price based on daily price
+
+```{r}
+## Remove missing value in the data
+gas<-subset(gas,!{is.na(VALUE)})
+```
+
+```{r}
+## Get the monthly average
+gasMonth<-aggregate(list(monthly_value = gas$VALUE), 
+                    list(month = cut(gas$DATE, breaks="1 month")), 
+                    mean)
+```
+
+</section>
+
+<section>
+- Convert the data into time series object using function __ts__
+```{r}
+## Change Value to TS class
+gasMonth_ts<-ts(gasMonth,start=c(1986,1),end=c(2016,4),deltat = 1/12)
+gasMonth_ts<-gasMonth_ts[,2] # Remove unnecessary column
+head(gasMonth_ts)
+```
+</section>
+
+
+```{r, echo=FALSE, results='hide'}
+## Plot the log of the Gas Price
+gasMonth_tsLog<-log(gasMonth_ts)
+### Plot the acf for the log of the original Gas Price
+##---------------------------------------------------------------
+```
+
+
+## ANALYZE TIME SERIES DATA
+
+<section>
+- Plot the data and the ACF
+```{r}
+## Plot the original Gas Price
+ts.plot(gasMonth_ts)
+```
+</section>
+
+<section>
+```{r}
+### Plot the acf for the original Gas Price
+acf(gasMonth_ts)
+```
+</section>
+
+<section>
+Check stionarity of the log-difference 
+```{r, results='hide',echo=FALSE}
+## Plot the log difference of the Gas Price
+gasMonth_tsLogDiff<-diff(gasMonth_tsLog)
+ts.plot(gasMonth_tsLogDiff)
+```
+</section>
+
+<section>
+Check acf of the log-difference 
+```{r}
+### Plot the acf for the log difference Gas Price
+acf(gasMonth_tsLogDiff)
+```
+</section>
+
+
+```{r, echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+##substract the training data
+library(astsa)
+library(tseries)
+library(fGarch)
+gasMonthTrainLogDiff<-ts(gasMonth_tsLogDiff[1:359],start=c(1986,2),end=c(2015,12),deltat = 1/12)
+
+##---------------------------------------------------------------
+```
+
+<section>
+Based on AIC, the screening result suggests that an ARMA (1,0) is a better.
+```{r }
+#Write a function to compute AIC of various ARMA orders
+AICfn<-function(N,K)
+{
+  for(i in 1:N)
+  {for(j in 1:N)
+  {
+    print(paste("AIC=",round(AIC(arima(K,order=c(i-1,0,j-1))),0),"p=",i-1,"q=", j-1))
+  }}}
+AICfn(2,gasMonthTrainLogDiff)
+```
+</section>
+
+
+## RESIDUAL ANALYSIS AND GARCH MODEL
+<section>
+</section>
+
+<section>
+Fit ARMA (1,0) and plot the residual plot.
+```{r, fig.width=8,fig.height=2.5}
+gasMod<-arima(gasMonthTrainLogDiff, order = c(1,0,0));
+#Residual analysis
+plot(gasMod$residuals,main="Plot of residuals of AR(1) models for the gasMonthTrainLogDiff")
+
+```
+</section>
+
+<section>
+Use t-test to find the residual is not different from 0.
+```{r}
+## Use t-test to check the value is significantly different from 0
+t.test(gasMod$residuals,mu=0)
+```
+</section>
+
+<section>
+Check the ACF for squared residuals
+```{r,results='hide',fig.width=8,fig.height=3.5}
+#Residual ACF and PACF plots for squared residuals
+acf2(gasMod$residuals^2)
+```
+</section>
+
+
+<section>
+Use loop to examine ideal GARCH model which GARCH(1,1) is the best
+```{r,warning=FALSE}
+AICfn2<-function(N,K)
+{
+  for(i in 1:(N+1))
+  { for(j in 1:N)
+  {
+    print(paste("AIC=",round(AIC(garch(residuals(K),order=c(i,j-1),trace=FALSE)),0),"p=",i,"q=", j-1))
+  }}}
+AICfn2(2,gasMod)
+```
+</section>
+
+<section>
+Fit time series model for ARMA(1,0)+GARCH(1,1)
+
+```{r,fig.width=8,fig.height=2.5}
+gfit_garch<-garchFit(formula=~arma(1,0)+garch(1,1),data = gasMonthTrainLogDiff,
+               trace = F,include.mean = F)
+u <- gfit_garch@sigma.t
+```
+</section>
+
+```{r,fig.width=8,fig.height=2.5,echo=FALSE,warning=FALSE, message=FALSE}
+arch.fit<-garch(gasMod$residuals,order = c(1,1),trace=F)
+arch.fit.res<-resid(arch.fit)[-1]
+```
+
+<section>
+QQ Plot: ARMA VS ARMA+GARCH
+
+```{r,fig.width=8,fig.height=4,echo=FALSE}
+par(mfrow=c(1,2)) # set up
+qqnorm(residuals(gasMod))
+qqline(residuals(gasMod))
+qqnorm(arch.fit.res)
+qqline(arch.fit.res)
+```
+</section>
+
+
+<section>
+```{r,fig.width=8,fig.height=3.5}
+## Plot the garch fit 
+plot(gasMonthTrainLogDiff, type="l",ylab="GAS Log difference", lwd=1, col="blue")
+lines(window(gasMonthTrainLogDiff-2*u), lty=2, col="red")
+lines(window(gasMonthTrainLogDiff+2*u), lty=2, col="red")
+
+```
+</section>
+
+## FIT TIME SERIES NEURAL NETWORK
+
+<section>
+```{r,fig.width=8,fig.height=3}
+## Fit Neural Network
+library(forecast)
+neural.fit<-nnetar(gasMonthTrainLogDiff)
+neural.fit.for<-forecast(neural.fit)
+plot(neural.fit.for)
+```
+</section>
+
+## MODEL COMPARISON
+```{r, echo=FALSE, results='hide'}
+gfit_arima<-arima(gasMonthTrainLogDiff,order = c(1,0,0))
+#Predict the fitted value
+##obtain predicted value of arima+GARCH model
+pre_garch<-predict(gfit_garch,n.ahead=4,trace=FALSE)
+##obtain predicted value of pure arima model
+pre_arima<-predict(gfit_arima,n.ahead=4,trace=FALSE)
+##obtain predicted valeu of neural network model
+neural.fit.for<-forecast(neural.fit)
+#compare different predicted value
+real_value<-gasMonth_tsLogDiff[360:363]
+library(pander)
+
+library(Metrics)
+##rmse
+rmse_garch<-rmse(real_value,pre_garch$meanForecast)
+rmse_arima<-rmse(real_value,pre_arima$pred)
+rmse_neural<-rmse(real_value,neural.fit.for$mean[1:4])
+rmse<-data.frame(rmse_garch,rmse_arima,rmse_neural)
+rmse<-c(rmse_garch,rmse_arima,rmse_neural)
+##mae
+mae_garch<-mae(real_value,pre_garch$meanForecast)
+mae_arima<-mae(real_value,pre_arima$pred)
+mae_neural<-mae(real_value,neural.fit.for$mean[1:4])
+mae<-c(mae_garch,mae_arima,mae_neural)
+comparison<-rbind(rmse,mae)
+row.names(comparison)<-c("MAE","RMSE")
+colnames(comparison)<-c("GARCH","ARMA","NEURAL NETWORK")
+```
+
+
+<section>
+
+Based on MAE and RMSE, the ARMA model has the smallest for these two criteria. 
+Therefore, using the ARMA(1,0) to fit the log difference is the best predictor 
+
+for predicting JAN/2016 - APR/2016
+
+```{r,results='asis'}
+pandoc.table(comparison)
+```
+</section>
+
+## THANK YOU {data-background-video="background.mp4"}
