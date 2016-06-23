@@ -17,7 +17,7 @@ library(pander)
 
 Analyze and forecast crude oil prices using the data from West Texas Intermediate (WTI)
 
-## {data-background-iframe="download data.html"}
+## {data-background-iframe="https://fred.stlouisfed.org/series/DCOILWTICO/downloaddata"}
 
 ##  Data Preparation
 
